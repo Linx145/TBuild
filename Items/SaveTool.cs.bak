@@ -1,0 +1,50 @@
+using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+using Terraria;
+using Terraria.DataStructures;
+using Terraria.ID;
+using Terraria.ModLoader;
+using System.Threading;
+
+namespace TBuild.Items
+{
+    public class SaveTool : ModItem
+    {
+        public override void SetDefaults()
+        {
+
+            item.width = 20;
+            item.height = 22;
+            item.maxStack = 1;
+
+            item.value = 0;
+            item.rare = 2;
+            item.useStyle = 1;
+            item.useTime = 20;
+            item.useAnimation = 20; ;
+            item.consumable = false;
+            item.autoReuse = false;
+        }
+
+        public override void SetStaticDefaults()
+        {
+            DisplayName.SetDefault("Save Tool");
+            Tooltip.SetDefault("Saves the selection, if any.\nFile will be saved as whatever you set in /filename, and by default saves on the desktop");
+        }
+
+        public void DoSave(object obj)
+        {
+            TBuildWorld.SaveSelection();
+        }
+        public override bool UseItem(Player player)
+        {
+            if (!TBuildWorld.isSaving)
+            {
+                ThreadPool.QueueUserWorkItem(new WaitCallback(DoSave));
+                return true;//TBuildWorld.SaveSelection();
+            }
+            else return false;
+        }
+    }
+}

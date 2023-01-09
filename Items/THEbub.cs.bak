@@ -1,0 +1,48 @@
+using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+using Terraria;
+using Terraria.DataStructures;
+using Terraria.ID;
+using Terraria.ModLoader;
+
+namespace TBuild.Items
+{
+    public class THEbub : ModItem
+    {
+        public override void SetDefaults()
+        {
+            item.width =28;
+            item.height = 28;
+            item.maxStack = 1;
+
+            item.value = 0;
+            item.rare = 5;
+            item.useStyle = 1;
+            item.useTime = 10;
+            item.useAnimation = 10;
+            item.consumable = false;
+            item.autoReuse = false;
+            item.noUseGraphic = true;
+            
+        }
+
+        public override void SetStaticDefaults()
+        {
+            DisplayName.SetDefault("THE bub");
+            Tooltip.SetDefault("A bubble that allows you to travel the chaotic greater dimensions without your brains being eaten by daemons. Instantly.\nTeleport to your mouse cursor without any repercussions! Building mode only");
+        }
+
+        public override bool UseItem(Player player)
+        {
+            if (ModContent.GetInstance<TBuildConfig>().editorMode)
+            {
+                if (Main.netMode!= 2)
+                {
+                    player.Teleport(Main.MouseWorld);
+                }
+            }
+            return true;
+        }
+    }
+}

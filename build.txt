@@ -1,0 +1,6 @@
+author = Linx145
+version = 1.0
+displayName = TBuild Library
+hideCode = false
+hideResources = false
+includeSource = true

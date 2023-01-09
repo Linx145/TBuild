@@ -1,0 +1,428 @@
+﻿using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+using Terraria;
+using Terraria.ID;
+using Terraria.ModLoader;
+using Terraria.ModLoader.IO;
+using System.IO;
+using Terraria.DataStructures;
+
+namespace TBuild
+{
+    public class TBuildLoadOperations
+    {
+        public static Point GetTBXDimensions(Mod mod, string name)
+        {
+            //Mod mod = ModLoader.GetMod("pinkymod");
+            Point result;
+
+            using (BinaryReader reader = new BinaryReader(new MemoryStream(mod.GetFileBytes(name))))
+            {
+                int version = reader.ReadInt32();
+
+                result = new Point(reader.ReadInt32(), reader.ReadInt32());
+            }
+            return result;
+        }
+        public static bool AnyWire(ushort sTileHeader, byte bTileHeader)
+        {
+            return (((sTileHeader & 0x80) == 128) || ((sTileHeader & 0x100) == 256) || ((sTileHeader & 0x200) == 512) || ((bTileHeader & 0x80) == 128));
+        }
+        public static TBXLoadResult LoadTBX(Mod mod, Point position, string name, bool overrideTiles = false)
+        {
+            TBXLoadResult result;
+            result = LoadTBX(mod, position, mod.GetFileBytes(name), overrideTiles);
+            return result;
+        }
+        /// <summary>
+        /// in tile array coords please!
+        /// </summary>
+        /// <param name="startX"></param>
+        /// <param name="startY"></param>
+        /// <param name="width"></param>
+        /// <param name="height"></param>
+        public static void RectangleTileFrame(int startX, int startY, int width, int height)
+        {
+            for (int j = startX; j < startX + width + 1; j++)
+            {
+                for (int i = startY; i < startY + height + 1; i++)
+                {
+                    if (Main.tile[j, i].active() && Main.tile[j, i].type != 33)
+                    {
+                        WorldGen.TileFrame(j, i, resetFrame: true);
+                    }
+                    if (Main.tile[j, i].wall > 0)
+                    {
+                        Framing.WallFrame(j, i, resetFrame: true);
+                    }
+                }
+            }
+        }
+        public static int NewSign(int x, int y, string text)
+        {
+            for (int i = 0; i < Main.sign.Length; i++)
+            {
+                if (Main.sign[i] == null)
+                {
+                    Main.sign[i] = new Sign();
+                    Main.sign[i].x = x;
+                    Main.sign[i].y = y;
+                    Main.sign[i].text = text;
+                    return i;
+                }
+            }
+            return -1;
+        }
+        public static int NewChest(int x, int y, string name)
+        {
+            for (int i = 0; i < Main.chest.Length; i++)
+            {
+                if (Main.chest[i] == null)
+                {
+                    Main.chest[i] = new Chest();
+                    Main.chest[i].x = x;
+                    Main.chest[i].y = y;
+                    Main.chest[i].name = name;
+                    for (int c = 0; c < Main.chest[i].item.Length; c++)
+                    {
+                        Main.chest[i].item[c] = new Item();
+                    }
+                    return i;
+                }
+            }
+            return -1;
+        }
+        public static TBXLoadResult LoadTBX(Mod mod, Point position, byte[] array, bool overrideTiles = false)
+        {
+            //Mod mod = ModLoader.GetMod("TBuild");
+            List<int> chests = new List<int>();
+            TagCompound mainCompound = new TagCompound();
+
+            int loadVersion;
+            using (BinaryReader reader = new BinaryReader(new MemoryStream(array)))
+            {
+                loadVersion = reader.ReadInt32();
+                mod.Logger.Debug("load version: " + loadVersion.ToString());
+                if (loadVersion < 3)
+                {
+                    //read tiles
+                    {
+                        int width = reader.ReadInt32();
+                        int height = reader.ReadInt32();
+
+                        for (int i = position.X; i < position.X + width + 1; i++)
+                        {
+                            for (int j = position.Y; j < position.Y + height + 1; j++)
+                            {
+                                ushort sTileHeader = reader.ReadUInt16();
+                                byte bTileHeader = reader.ReadByte();
+                                byte liquid = reader.ReadByte();
+                                byte bTileHeader2 = reader.ReadByte();
+                                byte bTileHeader3 = reader.ReadByte();
+
+                                if ((sTileHeader & 0x20) == 32) //tile is active
+                                {
+                                    bool isModTile = reader.ReadBoolean();
+
+                                    if (!isModTile)
+                                    {
+                                        Main.tile[i, j].type = reader.ReadUInt16();
+                                    }
+                                    else
+                                    {
+                                        Main.tile[i, j].type = (ushort)ModLoader.GetMod(reader.ReadString()).TileType(reader.ReadString());
+                                    }
+                                    Main.tile[i, j].frameX = reader.ReadInt16();
+                                    Main.tile[i, j].frameY = reader.ReadInt16();
+
+                                    Main.tile[i, j].bTileHeader2 = bTileHeader2;
+                                    Main.tile[i, j].bTileHeader3 = bTileHeader3;
+                                    Main.tile[i, j].sTileHeader = sTileHeader;
+                                    Main.tile[i, j].liquid = liquid;
+                                }
+                                bool isModWall = reader.ReadBoolean();
+                                ushort wall;
+                                if (isModWall)
+                                {
+                                    wall = (ushort)ModLoader.GetMod(reader.ReadString()).WallType(reader.ReadString());
+                                }
+                                else
+                                {
+                                    wall = reader.ReadUInt16();
+                                }
+
+                                if (((sTileHeader & 0x20) != 32) && (wall != WallID.None || overrideTiles || liquid > 0 || AnyWire(sTileHeader, bTileHeader))) //tile is inactive and there is no wall either
+                                {
+                                    Main.tile[i, j].sTileHeader = sTileHeader;
+                                    Main.tile[i, j].bTileHeader = bTileHeader;
+                                    Main.tile[i, j].bTileHeader2 = bTileHeader2;
+                                    Main.tile[i, j].bTileHeader3 = bTileHeader3;
+                                    Main.tile[i, j].wall = wall;
+                                    Main.tile[i, j].liquid = liquid;
+                                }
+                                if (((sTileHeader & 0x20) == 32))
+                                {
+                                    Main.tile[i, j].wall = wall;
+                                }
+                                //else leave the tile alone
+                            }
+                        }
+                    }
+
+                    //load chests
+                    {
+                        int count = reader.ReadInt32();
+                        mod.Logger.Debug(string.Concat("Chests detected: ", count));
+                        for (int i = 0; i < count; i++)
+                        {
+                            int x = reader.ReadInt32();
+                            int y = reader.ReadInt32();
+                            int chest = NewChest(x + position.X, y + position.Y, reader.ReadString());
+
+                            mod.Logger.Debug(string.Concat("Chest Loaded at ", x, ", ", y));
+
+                            int items = reader.ReadInt32();
+                            for (int c = 0; c < items; c++)
+                            {
+                                bool isModItem = reader.ReadBoolean();
+                                int type;
+                                if (isModItem)
+                                {
+                                    type = ModLoader.GetMod(reader.ReadString()).ItemType(reader.ReadString());
+                                }
+                                else
+                                {
+                                    type = reader.ReadInt32();
+                                }
+                                int stack = reader.ReadInt32();
+
+                                byte prefix = reader.ReadByte();
+
+                                if (type != ItemID.None)
+                                {
+                                    Main.chest[chest].item[c] = new Item();
+                                    Main.chest[chest].item[c].netDefaults(type);
+                                    Main.chest[chest].item[c].prefix = prefix;
+                                    Main.chest[chest].item[c].stack = stack;
+                                }
+
+                                chests.Add(chest);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    mainCompound = TagIO.Read(reader);
+                }
+            }
+            if (loadVersion >= 3)
+            {
+                int width = mainCompound.Get<int>("width");
+                int height = mainCompound.Get<int>("height");
+                //read tiles
+                byte[] tiles = mainCompound.GetByteArray("tiles");
+                using (MemoryStream memoryStream = new MemoryStream(tiles))
+                {
+                    using (BinaryReader reader = new BinaryReader(memoryStream))
+                    {
+                        //int cont = reader.ReadInt32();
+                        for (int i = position.X; i < position.X + width + 1; i++)
+                        {
+                            TileSerialization tileSerialization = new TileSerialization();
+
+                            for (int j = position.Y; j < position.Y + height + 1; j++)
+                            {
+                                if (tileSerialization.cont == 0) //read next tile
+                                {
+                                    tileSerialization.cont = reader.ReadByte();
+                                    //if (i == position.X) Main.NewText(tileSerialization.cont);
+                                    tileSerialization.sTileHeader = reader.ReadUInt16();
+                                    tileSerialization.bTileHeader1 = reader.ReadByte();
+                                    tileSerialization.liquid = reader.ReadByte();
+                                    //tileSerialization.bTileHeader3 = reader.ReadByte();
+
+                                    if ((tileSerialization.sTileHeader & 0x20) == 32) //tile is active
+                                    {
+                                        bool isModded = reader.ReadBoolean();
+
+                                        if (isModded)
+                                        {
+                                            string[] readData = reader.ReadString().Split(' ');
+                                            tileSerialization.type = (ushort)ModLoader.GetMod(readData[0]).TileType(readData[1]);
+                                        }
+                                        else
+                                        {
+                                            tileSerialization.type = reader.ReadUInt16();
+                                        }
+                                        if (Main.tileFrameImportant[(ushort)tileSerialization.type])
+                                        {
+                                            tileSerialization.frameX = reader.ReadInt16();
+                                            tileSerialization.frameY = reader.ReadInt16();
+                                        }
+                                    }
+
+                                    bool isModWall = reader.ReadBoolean();
+                                    if (isModWall)
+                                    {
+                                        string[] readData = reader.ReadString().Split(' ');
+                                        tileSerialization.wall = (ushort)ModLoader.GetMod(readData[0]).WallType(readData[1]);
+                                    }
+                                    else
+                                    {
+                                        tileSerialization.wall = reader.ReadUInt16();
+                                    }
+                                }
+
+                                //place tile
+                                if ((tileSerialization.sTileHeader & 0x20) == 32) //tile is active
+                                {
+
+                                    if (Main.tileFrameImportant[(ushort)tileSerialization.type])
+                                    {
+                                        Main.tile[i, j].frameX = (short)tileSerialization.frameX;
+                                        Main.tile[i, j].frameY = (short)tileSerialization.frameY;
+                                    }
+
+                                    Main.tile[i, j].type = (ushort)tileSerialization.type;
+                                    Main.tile[i, j].bTileHeader = tileSerialization.bTileHeader1;
+                                    //Main.tile[i, j].bTileHeader3 = 0;// tileSerialization.bTileHeader3;
+                                    Main.tile[i, j].sTileHeader = tileSerialization.sTileHeader;
+                                    Main.tile[i, j].liquid = tileSerialization.liquid;
+                                    Main.tile[i, j].wall = (ushort)tileSerialization.wall;
+                                }
+                                if (((tileSerialization.sTileHeader & 0x20) != 32) && ((tileSerialization.wall != null && (ushort)tileSerialization.wall != WallID.None) || overrideTiles || tileSerialization.liquid > 0 || AnyWire(tileSerialization.sTileHeader, tileSerialization.bTileHeader1))) //tile is inactive and there is no wall either
+                                {
+                                    Main.tile[i, j].sTileHeader = tileSerialization.sTileHeader;
+                                    Main.tile[i, j].bTileHeader = tileSerialization.bTileHeader1;
+                                    //Main.tile[i, j].bTileHeader3 = tileSerialization.bTileHeader3;
+                                    if (tileSerialization.wall != null) Main.tile[i, j].wall = (ushort)tileSerialization.wall;
+                                    Main.tile[i, j].liquid = tileSerialization.liquid;
+                                }
+
+                                //decrease counter
+                                tileSerialization.cont--;
+                            }
+                        }
+                        RectangleTileFrame(position.X, position.Y, width, height);
+                        //WorldGen.SectionTileFrame(position.X, position.Y, position.X + width, position.Y + height);
+                    }
+                }
+
+                //read chests
+                IList<TagCompound> loadedChests = mainCompound.GetList<TagCompound>("chests");
+                for (int i = 0; i < loadedChests.Count; i++)
+                {
+                    Point16 chestPos = loadedChests[i].Get<Point16>("position");
+                    string chestName = loadedChests[i].Get<string>("name");
+                    int chest = NewChest(chestPos.X + position.X, chestPos.Y + position.Y, chestName);
+
+                    mod.Logger.Debug(string.Concat("Chest Loaded at ", chestPos));
+
+                    IList<TagCompound> chestItems = loadedChests[i].GetList<TagCompound>("items");
+                    for (int c = 0; c < chestItems.Count; c++)
+                    {
+                        Main.chest[chest].item[c] = ItemIO.Load(chestItems[c]);
+                    }
+                    chests.Add(chest);
+                }
+
+                //read TileEntities cri
+                IList<TagCompound> tileEntities = mainCompound.GetList<TagCompound>("tileEntities"); //todo: Test this shit out
+                Main.NewText(tileEntities.Count);
+                for (int i = 0; i < tileEntities.Count; i++)
+                {
+                    Point16 tileEntityPos = new Point16(tileEntities[i].Get<short>("positionX") + position.X, tileEntities[i].Get<short>("positionY") + position.Y);
+                    if (tileEntities[i].ContainsKey("modtype"))
+                    {
+                        string[] modtype = tileEntities[i].Get<string>("modtype").Split(' ');
+                        Main.NewText(string.Concat("placed tileEntity ", modtype[1], " at ", tileEntityPos.ToString()));
+                        TileEntity.PlaceEntityNet(tileEntityPos.X, tileEntityPos.Y, ModLoader.GetMod(modtype[0]).TileEntityType(modtype[1]));
+                        ((ModTileEntity)TileEntity.ByPosition[tileEntityPos]).Load(tileEntities[i].Get<TagCompound>("modData"));
+                    }
+
+                }
+
+                if (mainCompound.ContainsKey("signs"))
+                {
+                    IList<TagCompound> signs = mainCompound.GetList<TagCompound>("signs");
+                    for (int i = 0; i < signs.Count; i++)
+                    {
+                        NewSign(signs[i].Get<int>("x") + position.X, signs[i].Get<int>("y") + position.Y, signs[i].Get<string>("text"));
+                    }
+                }
+
+            }
+            return new TBXLoadResult(chests.ToArray());
+        }
+        public static TBXLoadResult LoadTBXFromExternalFile(Mod mod, Point position, string name, bool overrideTiles = false)
+        {
+            if (!File.Exists(name))
+            {
+                Main.NewText("No such file " + name + " could be found!");
+                return null;
+            }
+            byte[] array = File.ReadAllBytes(name);
+            return LoadTBX(mod, position, array, overrideTiles);
+        }
+
+        public static TileHitmap LoadHitmap(Mod mod, Point position, byte[] array, string name)
+        {
+            TileHitmap hitmap;
+            using (BinaryReader reader = new BinaryReader(new MemoryStream(array)))
+            {
+                int readVersion = reader.ReadInt32();
+
+                if (readVersion == 1)
+                {
+                    int width = reader.ReadInt32();
+                    int height = reader.ReadInt32();
+                    hitmap = new TileHitmap(position, width, height, name);
+
+                    List<TileHitline> loaded = new List<TileHitline>();
+
+                    for (int i = 0; i < width; i++)
+                    {
+                        for (int j = 0; j < height; j++)
+                        {
+                            short val = reader.ReadInt16();
+                            if (val < 0) //empty tiles, dont even bother
+                            {
+                                j -= val;
+                            }
+                            else
+                            {
+                                loaded.Add(new TileHitline((ushort)j, (ushort)(j + val)));
+                                j += val;
+                            }
+                        }
+                        hitmap.data[i] = loaded.ToArray();
+                    }
+                }
+                else
+                {
+                    throw new Exception("Cannot load hitmap data as it is of an unknown version (version " + readVersion.ToString() + ")");
+                }
+            }
+            return hitmap;
+        }
+
+        public static TileHitmap LoadHitmapFromExternalFile(Mod mod, Point position, string name)
+        {
+            if (!File.Exists(name))
+            {
+                Main.NewText("No such file " + name + " could be found!");
+                return null;
+            }
+            byte[] array = File.ReadAllBytes(name);
+            return LoadHitmap(mod, position, array, name);
+        }
+        public static TileHitmap LoadHitmap(Mod mod, Point position, string name)
+        {
+            TileHitmap result;
+            result = LoadHitmap(mod, position, mod.GetFileBytes(name), name);
+            return result;
+        }
+    }
+}

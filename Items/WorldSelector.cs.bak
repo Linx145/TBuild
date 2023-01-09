@@ -1,0 +1,43 @@
+using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+using Terraria;
+using Terraria.DataStructures;
+using Terraria.ID;
+using Terraria.ModLoader;
+
+namespace TBuild.Items
+{
+    public class WorldSelector : ModItem
+    {
+        public override void SetDefaults()
+        {
+
+            item.width = 30;
+            item.height = 30;
+            item.maxStack = 1;
+
+            item.value = 0;
+            item.rare = 2;
+            item.useStyle = 1;
+            item.useTime = 20;
+            item.useAnimation = 20; ;
+            item.consumable = false;
+            item.autoReuse = false;
+        }
+
+        public override void SetStaticDefaults()
+        {
+            DisplayName.SetDefault("World Selector Tool");
+            Tooltip.SetDefault("Select the whole world!");
+        }
+
+        public override bool UseItem(Player player)
+        {
+            TBuildWorld.markerPos1 = Point.Zero;
+            TBuildWorld.markerPos2 = new Point(Main.maxTilesX - 1, Main.maxTilesY - 1);
+            Main.NewText("Selection Update");
+            return true;
+        }
+    }
+}

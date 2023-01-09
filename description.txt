@@ -1,0 +1,7 @@
+TBuild is a library and mod that allows you to save individual
+structures built in game as tbx files, which can then be loaded
+programmatically in order to provide a smoother and less
+brain-damaging way of creating modded structures.
+It also provides a handful of useful commands, such as
+/replacetile, /replacewall, /settile, and /q to quit out of the game
+without saving.

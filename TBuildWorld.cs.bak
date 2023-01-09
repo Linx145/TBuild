@@ -1,0 +1,829 @@
+﻿using System;
+using System.Collections.Generic;
+using Terraria;
+using Terraria.ModLoader;
+using Terraria.ID;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using System.IO;
+using Terraria.DataStructures;
+using Terraria.GameContent.Tile_Entities;
+using Terraria.IO;
+using Terraria.ModLoader.IO;
+
+namespace TBuild
+{
+    public class TBuildWorld : ModWorld
+    {
+        public static string fileName;
+        public static Point markerPos1;
+        public static Point markerPos2;
+        public const int version = 3;
+        public const int hitmapSaveVersion = 1;
+        public static bool saveProjectiles;
+        public static bool saveNPCs;
+
+        //version 2: No TileEntitySupport
+        //version 3: Compressed
+
+        public static void ReplaceWallOperation(ushort wall1, ushort wall2)
+        {
+            int wallsChanged = 0;
+            Main.NewText(wall1);
+            Main.NewText(wall2);
+            if (markerPos1 == markerPos2)
+            {
+                return;
+            }
+            for (int i = markerPos1.X; i < markerPos2.X + 1; i++)
+            {
+                for (int j = markerPos1.Y; j < markerPos2.Y + 1; j++)
+                {
+                    if (Main.tile[i, j].wall == wall1)//(Main.tile[i, j].wall == WallID.None && wall1 == ushort.MaxValue) || (Main.tile[i, j].wall != WallID.None && Main.tile[i, j].wall == wall1))
+                    {
+                        Main.tile[i, j].wall = wall2;
+                        WorldGen.SquareWallFrame(i, j);
+                        wallsChanged++;
+                    }
+                }
+            }
+            Main.NewText("walls changed: " + wallsChanged.ToString(), Colors.RarityPink);
+        }
+
+
+        public static void ReplaceOperation(ushort tile1, ushort tile2)
+        {
+            int tilesChanged = 0;
+            if (markerPos1 == markerPos2)
+            {
+                return;
+            }
+            for (int i = markerPos1.X; i < markerPos2.X + 1; i++)
+            {
+                for (int j = markerPos1.Y; j < markerPos2.Y + 1; j++)
+                {
+                    if ((!Main.tile[i, j].active() && tile1 == ushort.MaxValue) || (Main.tile[i, j].active() && Main.tile[i, j].type == tile1))
+                    {
+                        Main.tile[i, j].type = tile2;
+                        if (tile2 == ushort.MaxValue)
+                        {
+                            Main.tile[i, j].active(false);
+                            Main.tile[i, j].type = 0;
+                        }
+                        else
+                        {
+                            Main.tile[i, j].active(true);
+                        }
+                        WorldGen.SquareTileFrame(i, j);
+                        tilesChanged++;
+                    }
+                }
+            }
+            Main.NewText("tiles changed: " + tilesChanged.ToString(), Colors.RarityPink);
+        }
+
+        public static void SetWallOperation(byte wall)
+        {
+            
+            int tilesChanged = 0;
+            if (markerPos1 == markerPos2)
+            {
+                return;
+            }
+            for (int i = markerPos1.X; i < markerPos2.X + 1; i++)
+            {
+                for (int j = markerPos1.Y; j < markerPos2.Y + 1; j++)
+                {
+                    Main.tile[i, j].wall = wall;
+                    WorldGen.SquareWallFrame(i, j);
+                    tilesChanged++;
+                }
+            }
+            Main.NewText("walls changed: " + tilesChanged.ToString(), Colors.RarityPink);
+        }
+        public static void SetTileOperation(ushort tile1)
+        {
+            int tilesChanged = 0;
+            if (markerPos1 == markerPos2)
+            {
+                return;
+            }
+            for (int i = markerPos1.X; i < markerPos2.X + 1; i++)
+            {
+                for (int j = markerPos1.Y; j < markerPos2.Y + 1; j++)
+                {
+                    Main.tile[i, j].type = tile1;
+                    if (tile1 == ushort.MaxValue)
+                    {
+                        Main.tile[i, j].active(false);
+                        Main.tile[i, j].type = 0;
+                    }
+                    else
+                    {
+                        Main.tile[i, j].active(true);
+                    }
+                    WorldGen.SquareTileFrame(i, j);
+                    tilesChanged++;
+                }
+            }
+            Main.NewText("tiles changed: " + tilesChanged.ToString(), Colors.RarityPink);
+        }
+
+        public static Rectangle saveArea
+        {
+            get
+            {
+                return new Rectangle(markerPos1.X, markerPos1.Y, markerPos2.X - markerPos1.X + 1, markerPos2.Y - markerPos1.Y + 1);
+            }
+        }
+
+        public static bool SaveSpecificEquals(Tile tile, Tile other)
+        {
+            if (Main.tileFrameImportant[tile.type])
+            {
+                return
+                    (other.type == tile.type) &&
+                    (other.bTileHeader == tile.bTileHeader) &&
+                    //(other.bTileHeader3 == tile.bTileHeader3) &&
+                    (other.liquid == tile.liquid) &&
+                    (other.sTileHeader == tile.sTileHeader) &&
+                    (other.frameX == tile.frameX) &&
+                    (other.frameY == tile.frameY) &&
+                    (other.wall == tile.wall);
+            }
+            else //do not need to check if frames are equal
+            {
+                return
+                    (other.type == tile.type) &&
+                    (other.bTileHeader == tile.bTileHeader) &&
+                    (other.liquid == tile.liquid) &&
+                    (other.sTileHeader == tile.sTileHeader) &&
+                    (other.wall == tile.wall);
+            }
+        }
+        public static bool isSaving = false;
+
+        public static bool SaveSelectionExperimentalV3()
+        {
+            if (markerPos1 == markerPos2)
+            {
+                return false;
+            }
+            Main.NewText("Save Started!");
+            isSaving = true;
+            TagCompound mainCompound = new TagCompound();
+
+            mainCompound.Add("width", markerPos2.X - markerPos1.X);
+            mainCompound.Add("height", markerPos2.Y - markerPos1.Y);
+
+            List<TileSerialization2> toSaveTiles = new List<TileSerialization2>();
+
+            for (int i = markerPos1.X; i < markerPos2.X + 1; i++)
+            {
+                //TileSerialization2 toSaveTile = new TileSerialization2();
+                ushort cont = 0;
+                Tile cachedTile = null;
+                for (int j = markerPos1.Y; j < markerPos2.Y + 1; j++)
+                {
+                    if (cont == 0)
+                    {
+                        cachedTile = Main.tile[i, j];
+                    }
+                    cont++;
+
+                    if (!SaveSpecificEquals(Main.tile[i, j], cachedTile))//cachedTile)
+                    {
+
+                        cont = 0;
+                    }
+                }
+            }
+
+            List<TagCompound> chests = new List<TagCompound>();
+            for (int m = 0; m < 1000; m++)
+            {
+                Chest chest = Main.chest[m];
+                if (chest != null)
+                {
+                    if (saveArea.Contains(new Point(chest.x, chest.y)))
+                    {
+                        TagCompound chestCompound = new TagCompound();
+                        chestCompound.Add("position", new Point16(chest.x - markerPos1.X, chest.y - markerPos1.Y));
+                        chestCompound.Add("name", chest.name);
+
+                        List<TagCompound> itemCompound = new List<TagCompound>();
+                        for (int k = 0; k < chest.item.Length; k++)
+                        {
+                            Item item = chest.item[k];
+                            itemCompound.Add(ItemIO.Save(item));
+                        }
+                        chestCompound.Add("items", itemCompound);
+                        chests.Add(chestCompound);
+                        Main.NewText(string.Concat("Saved Chest at (", chest.x, ", ", chest.y, ") with stored coordinates ", new Point(chest.x - markerPos1.X, chest.y - markerPos1.Y).ToString()));
+                    }
+                }
+            }
+            mainCompound.Add("chests", chests);
+
+            //write tile entities
+            List<TagCompound> tileEntities = new List<TagCompound>();
+            /*for (int i = markerPos1.X; i < markerPos2.X + 1; i++)
+            {
+                for (int j = markerPos1.Y; j < markerPos2.Y + 1; j++)
+                {
+                    if (TileEntity.ByPosition.ContainsKey(new Point16(i, j)))
+                    {*/
+            foreach (TileEntity entity in TileEntity.ByID.Values)
+            {
+                if (new Rectangle(markerPos1.X, markerPos1.Y, markerPos2.X - markerPos1.X, markerPos2.Y - markerPos1.Y).Contains(entity.Position.ToPoint()))
+                {
+                    //Main.NewText(string.Concat("Found Tile Entity at ", i, ", ", j), Color.Lime);
+                    //TileEntity entity = TileEntity.ByPosition[new Point16(i, j)];
+                    TagCompound entityCompound = new TagCompound();
+
+                    entityCompound.Add("positionX", (short)(entity.Position.X - markerPos1.X));
+                    entityCompound.Add("positionY", (short)(entity.Position.Y - markerPos1.Y));
+
+                    if (entity is ModTileEntity)
+                    {//(entity as ModTileEntity)
+                        entityCompound.Add("modtype", (entity as ModTileEntity).mod.Name + " " + (entity as ModTileEntity).Name);
+                        entityCompound.Add("modData", (entity as ModTileEntity).Save());
+                    }
+                    else//entity.type < 3) //entities as of 1.3 are logic sensor, dummy and item frames
+                    {
+                        entityCompound.Add("type", entity.type);
+                        TBuild.AddVanillaTileEntityToTagCompound(ref entityCompound, entity);
+                        //entityCompound.Add(entity);
+                    }
+                    tileEntities.Add(entityCompound);
+                }
+            }
+                    /*}
+                }
+            }*/
+
+            mainCompound.Add("tileEntities", tileEntities);
+
+            List<TagCompound> signs = new List<TagCompound>();
+            for (int i = 0; i < Main.sign.Length; i++)
+            {
+                if (Main.sign[i] != null && new Rectangle(markerPos1.X, markerPos1.Y, markerPos2.X - markerPos1.X, markerPos2.Y - markerPos1.Y).Contains(new Point(Main.sign[i].x, Main.sign[i].y)))
+                {
+                    signs.Add(new TagCompound()
+                    {
+                        {
+                            "text", Main.sign[i].text
+                        },
+                        {
+                            "x", Main.sign[i].x - markerPos1.X
+                        },
+                        {
+                            "y", Main.sign[i].y - markerPos1.Y
+                        }
+                    });
+                    Main.NewText(string.Concat("Added sign at (", Main.sign[i].x, ", ", Main.sign[i].y, ")"));
+                }
+            }
+            if (signs.Count > 0) mainCompound.Add("signs", signs);
+
+            using (BinaryWriter writer = new BinaryWriter(File.Create(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) + "/" + fileName + ".tbx")))
+            {
+                writer.Write(version);
+                TagIO.Write(mainCompound, writer);
+            }
+            isSaving = false;
+            Main.NewText("Save Complete!");
+            return true;
+        }
+        public static bool SaveSelection()
+        {
+            if (markerPos1 == markerPos2)
+            {
+                return false;
+            }
+            Main.NewText("Save Started!");
+            isSaving = true;
+            TagCompound mainCompound = new TagCompound();
+
+            mainCompound.Add("width", markerPos2.X - markerPos1.X);
+            mainCompound.Add("height", markerPos2.Y - markerPos1.Y);
+
+            //write tiles
+
+            List<TileSerialization> toSaveTiles = new List<TileSerialization>();
+            {
+                int i = 0;
+                int j = 0;
+
+                try
+                {
+                    for (i = markerPos1.X; i < markerPos2.X + 1; i++)
+                    {
+                        Main.NewText(string.Concat("Saving Tiles (", Math.Round(100f * ((float)(i - markerPos1.X) / (float)(markerPos2.X + 1 - markerPos1.X))), "%)"));
+
+                        int cont = -1;
+                        Tile cachedTile = Main.tile[i, markerPos1.Y];
+                        for (j = markerPos1.Y; j < markerPos2.Y + 2; j++)
+                        {
+                            cont++;
+
+
+                            bool notSafeSpecificEquals = false;// = !SaveSpecificEquals(cachedTile, Main.tile[i, j]);
+                            if (j < markerPos2.Y + 1 && cont < 255)
+                            {
+                                notSafeSpecificEquals = !SaveSpecificEquals(cachedTile, Main.tile[i, j]);
+                            }
+
+                            if (j == markerPos2.Y + 1 || cont == 255 || notSafeSpecificEquals) //either we ran out of space or its a different tile: Append current tile
+                            {
+
+                                TileSerialization newTileSeralizationData = new TileSerialization(
+                                    cachedTile.sTileHeader,
+                                    cachedTile.bTileHeader,
+                                    cachedTile.liquid, (byte)cont);
+
+                                if (cachedTile.active())
+                                {
+                                    ModTile modTile = TileLoader.GetTile(cachedTile.type);
+                                    newTileSeralizationData.isModded = modTile != null;
+                                    if (modTile == null)
+                                    {
+                                        newTileSeralizationData.type = cachedTile.type;
+                                    }
+                                    else
+                                    {
+                                        newTileSeralizationData.type = string.Concat(modTile.mod.Name, " ", modTile.Name);
+                                    }
+                                    if (Main.tileFrameImportant[cachedTile.type]) //we need to save frames for furniture and stuff. However, we do not need to do the same for general blocks.
+                                    {
+                                        newTileSeralizationData.frameX = cachedTile.frameX;
+                                        newTileSeralizationData.frameY = cachedTile.frameY;
+                                    }
+                                }
+
+                                ModWall modWall = WallLoader.GetWall(cachedTile.wall);
+                                newTileSeralizationData.wallIsModded = modWall != null;
+                                if (modWall == null)
+                                {
+                                    newTileSeralizationData.wall = cachedTile.wall;
+                                }
+                                else
+                                {
+                                    newTileSeralizationData.wall = string.Concat(modWall.mod.Name, " ", modWall.Name);
+                                }
+                                toSaveTiles.Add(newTileSeralizationData); //append our newly created tile to the list for saving later                       if ( j != markerPos2.Y + 1) cachedTile = Main.tile[i, j]; //update my cached tile
+                                if (j != markerPos2.Y + 1)
+                                {
+                                    cachedTile = Main.tile[i, j];
+                                }
+                                cont = 0; //reset cont to 0
+                            }
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    ModLoader.GetMod("TBuild").Logger.Error("ERROR! Caused when trying to compile tile at (" + i.ToString() + ", " + j.ToString() + ")");
+                    throw e;
+                }
+        }
+            
+            using (MemoryStream memoryStream = new MemoryStream())
+            {
+                using (BinaryWriter writer = new BinaryWriter(memoryStream))
+                {
+                    //append saved tile data to thing
+                    //writer.Write(toSaveTiles.Count);
+                    //Main.NewText(toSaveTiles.Count);
+                    for (int i = 0; i < toSaveTiles.Count; i++)
+                    {
+                        TileSerialization cachedTile = toSaveTiles[i];
+                        writer.Write(cachedTile.cont);
+                        writer.Write(cachedTile.sTileHeader);
+                        writer.Write(cachedTile.bTileHeader1);
+                        writer.Write(cachedTile.liquid);
+                        //writer.Write(cachedTile.bTileHeader3withoutwall);
+                        //this is safe since we can detect if the tile is active during load, and hence 
+                        if (cachedTile.type != null)
+                        {
+                            writer.Write(cachedTile.isModded);
+                            if (cachedTile.isModded)
+                            {
+                                writer.Write((string)cachedTile.type);
+                            }
+                            else
+                            {
+                                writer.Write((ushort)cachedTile.type);
+                            }
+
+                            if (cachedTile.frameX != null && cachedTile.frameY != null)
+                            {
+                                writer.Write((short)cachedTile.frameX);
+                                writer.Write((short)cachedTile.frameY);
+                            }
+
+                        }
+                        //since theres no bool to detect whether tile is active or not, just save the whole thing
+                        writer.Write(cachedTile.wallIsModded);
+                        if (cachedTile.wallIsModded)
+                        {
+                            writer.Write((string)cachedTile.wall);
+                        }
+                        else
+                        {
+                            writer.Write((ushort)cachedTile.wall);
+                        }
+                    }
+                }
+                mainCompound.Add("tiles", memoryStream.ToArray());
+            }
+
+            //write chests
+            List<TagCompound> chests = new List<TagCompound>();
+            for (int m = 0; m < 1000; m++)
+            {
+                Chest chest = Main.chest[m];
+                if (chest != null)
+                {
+                    if (saveArea.Contains(new Point(chest.x, chest.y)))
+                    {
+                        TagCompound chestCompound = new TagCompound();
+                        chestCompound.Add("position", new Point16(chest.x - markerPos1.X, chest.y - markerPos1.Y));
+                        chestCompound.Add("name", chest.name);
+
+                        List<TagCompound> itemCompound = new List<TagCompound>();
+                        for (int k = 0; k < chest.item.Length; k++)
+                        {
+                            Item item = chest.item[k];
+                            itemCompound.Add(ItemIO.Save(item));
+                        }
+                        chestCompound.Add("items", itemCompound);
+                        chests.Add(chestCompound);
+                        Main.NewText(string.Concat("Saved Chest at (", chest.x, ", ", chest.y, ") with stored coordinates ", new Point(chest.x - markerPos1.X, chest.y - markerPos1.Y).ToString()));
+                    }
+                }
+            }
+            mainCompound.Add("chests", chests);
+
+            //write tile entities
+            List<TagCompound> tileEntities = new List<TagCompound>();
+            for (int i = markerPos1.X; i < markerPos2.X + 1; i++)
+            {
+                for (int j = markerPos1.Y; j < markerPos2.Y + 1; j++)
+                {
+                    if (TileEntity.ByPosition.ContainsKey(new Point16(i, j)))
+                    {
+                        Main.NewText(string.Concat("Found Tile Entity at ", i, ", ", j), Color.Lime);
+                        TileEntity entity = TileEntity.ByPosition[new Point16(i, j)];
+                        TagCompound entityCompound = new TagCompound();
+
+                        entityCompound.Add("positionX", (short)(entity.Position.X - markerPos1.X));
+                        entityCompound.Add("positionY", (short)(entity.Position.Y - markerPos1.Y));
+
+                        if (entity is ModTileEntity)
+                        {//(entity as ModTileEntity)
+                            entityCompound.Add("modtype", (entity as ModTileEntity).mod.Name + " " + (entity as ModTileEntity).Name);
+                            entityCompound.Add("modData", (entity as ModTileEntity).Save());
+                        }
+                        else//entity.type < 3) //entities as of 1.3 are logic sensor, dummy and item frames
+                        {
+                            entityCompound.Add("type", entity.type);
+                            TBuild.AddVanillaTileEntityToTagCompound(ref entityCompound, entity);
+                            //entityCompound.Add(entity);
+                        }
+                        tileEntities.Add(entityCompound);
+                    }
+                }
+            }
+            mainCompound.Add("tileEntities", tileEntities);
+
+            List<TagCompound> signs = new List<TagCompound>();
+            for (int i = 0; i < Main.sign.Length; i++)
+            {
+                if (Main.sign[i] != null && new Rectangle(markerPos1.X, markerPos1.Y, markerPos2.X - markerPos1.X, markerPos2.Y - markerPos1.Y).Contains(new Point(Main.sign[i].x, Main.sign[i].y)))
+                {
+                    signs.Add(new TagCompound()
+                    {
+                        {
+                            "text", Main.sign[i].text
+                        },
+                        {
+                            "x", Main.sign[i].x - markerPos1.X
+                        },
+                        {
+                            "y", Main.sign[i].y - markerPos1.Y
+                        }
+                    });
+                    Main.NewText(string.Concat("Added sign at (", Main.sign[i].x, ", ", Main.sign[i].y, ")"));
+                }
+            }
+            if (signs.Count > 0) mainCompound.Add("signs", signs);
+
+            using (BinaryWriter writer = new BinaryWriter(File.Create(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) + "/" + fileName + ".tbx")))
+            {
+                writer.Write(version);
+                TagIO.Write(mainCompound, writer);
+            }
+            isSaving = false;
+            Main.NewText("Save Complete!");
+            return true;
+        }
+        public static bool SaveSelectionVersion2()
+        {
+            if (markerPos1 == markerPos2 || markerPos1 == Point.Zero || markerPos2 == Point.Zero)
+            {
+                return false;
+            }
+
+            //do our loading outside of the binarywriter so that we do not have to 
+
+            using (BinaryWriter finalWriter = new BinaryWriter(File.Create(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) + "/" + fileName + ".tbx")))
+            {
+                finalWriter.Write(version);
+
+
+                //write tiles
+                {
+                    finalWriter.Write(markerPos2.X - markerPos1.X);
+                    finalWriter.Write(markerPos2.Y - markerPos1.Y);
+                    //write vanilla tiles
+                    for (int i = markerPos1.X; i < markerPos2.X + 1; i++)
+                    {
+                        for (int j = markerPos1.Y; j < markerPos2.Y + 1; j++)
+                        {
+                            Tile tile = Main.tile[i, j];
+
+                            finalWriter.Write(tile.sTileHeader);
+                            finalWriter.Write(tile.bTileHeader);
+                            finalWriter.Write(tile.liquid);
+                            finalWriter.Write(tile.bTileHeader2);
+                            finalWriter.Write(tile.bTileHeader3);
+
+                            if (tile.active())
+                            {
+                                ModTile modTile = TileLoader.GetTile(tile.type);
+                                finalWriter.Write(modTile != null); //if true, is modded, else is vanilla
+                                if (modTile == null)
+                                {
+                                    finalWriter.Write(tile.type);
+                                }
+                                else
+                                {
+                                    finalWriter.Write(modTile.mod.Name);
+                                    finalWriter.Write(modTile.Name);
+                                }
+                                finalWriter.Write(tile.frameX);
+                                finalWriter.Write(tile.frameY);
+                            }
+
+                            ModWall modWall = WallLoader.GetWall(tile.wall);
+                            finalWriter.Write(modWall != null);
+                            if (modWall == null)
+                            {
+                                finalWriter.Write(tile.wall);
+                            }
+                            else
+                            {
+                                finalWriter.Write(modWall.mod.Name);
+                                finalWriter.Write(modWall.Name);
+                            }
+                        }
+                    }
+                }
+
+                //write chests
+                {
+
+                    Main.NewText(saveArea);
+
+                    List<Chest> toWrite = new List<Chest>();
+                    for (int m = 0; m < 1000; m++)
+                    {
+                        Chest chest = Main.chest[m];
+
+                        if (chest != null)
+                        {
+                            if (saveArea.Contains(new Point(chest.x, chest.y)))
+                            {
+                                Main.NewText("ADDED CHEST AT " + new Point(chest.x, chest.y).ToString());
+                                toWrite.Add(Main.chest[m]);
+                            }
+                        }
+                    }
+                    Main.NewText("chest count: " + toWrite.Count);
+                    finalWriter.Write(toWrite.Count);
+                    for (int i = 0; i < toWrite.Count; i++)
+                    {
+                        Chest chest = toWrite[i];
+                        Point storedCoord = new Point(chest.x - TBuildWorld.markerPos1.X, chest.y - TBuildWorld.markerPos1.Y);
+                        finalWriter.Write(storedCoord.X);
+                        finalWriter.Write(storedCoord.Y);
+                        finalWriter.Write(chest.name);
+
+                        finalWriter.Write(chest.item.Length);
+                        for (int k = 0; k < chest.item.Length; k++)
+                        {
+                            Item item = chest.item[k];
+                            finalWriter.Write(item.modItem != null); //true, is mod item. False, is vanilla
+                            if (item.modItem != null)
+                            {
+                                finalWriter.Write(item.modItem.mod.Name);
+                                finalWriter.Write(item.modItem.Name);
+                            }
+                            else finalWriter.Write(item.netID);
+                            finalWriter.Write(item.stack);
+                            finalWriter.Write(item.prefix);
+                        }
+
+                        Main.NewText(string.Concat("Saved Chest at (", chest.x, ", ", chest.y, ") with stored coordinates ", storedCoord.ToString()));
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        /*[Obsolete]
+        public static TBXLoadResult LoadTBX(Mod mod, Point position, string name, bool overrideTiles = false)
+        {
+            TBXLoadResult result;
+            result = //LoadTBX(mod, position, mod.GetFileBytes(name), overrideTiles);
+            return result;
+        }
+        [Obsolete]
+        public static TBXLoadResult LoadTBX(Mod mod, Point position, byte[] array, bool overrideTiles = false)
+        {
+            return TBuildLoadOperations.LoadTBX(mod, position, array, overrideTiles);
+        }
+        [Obsolete]
+        public static TBXLoadResult LoadTBXFromExternalFile(Mod mod, Point position, string name, bool overrideTiles = false)
+        {
+            if (!File.Exists(name))
+            {
+                Main.NewText("No such file " + name + " could be found!");
+                return null;
+            }
+            byte[] array = File.ReadAllBytes(name);
+            return LoadTBX(mod, position, array, overrideTiles);
+        }*/
+
+        public static void SaveHitmap()
+        {
+            if (markerPos1 == markerPos2)
+            {
+                return;
+            }
+            Main.NewText("Save Started!");
+            isSaving = true;
+
+            //we do not need to write the actual amt of shorts written because we can bypass that by simply incrementing the j value by amount read during read operations
+            using (BinaryWriter writer = new BinaryWriter(File.Create(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) + "/" + fileName + ".tbm")))//BoolCompressingWriter writer = new BoolCompressingWriter(File.Create(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) + "/" + fileName + ".tbm")))
+            {
+                writer.Write(hitmapSaveVersion);
+                writer.Write(markerPos2.X - markerPos1.X + 1);
+                writer.Write(markerPos2.Y - markerPos1.Y + 1);
+
+                bool cachedTileActive = Main.tile[markerPos1.X, markerPos1.Y].active();
+                //negative count = how many tiles are inactive
+                //positive count = how many tiles are active
+                short cont = 0;
+                for (int i = markerPos1.X; i < markerPos2.X + 1; i++)
+                {
+                    for (int j = markerPos1.Y; j < markerPos2.Y + 1; j++)
+                    {
+                        if (Main.tile[i, j].active() == cachedTileActive)
+                        {
+                            if (cachedTileActive)
+                            {
+                                cont++;
+                            }
+                            else
+                            {
+                                cont--;
+                            }
+                            if (j == markerPos2.Y)
+                            {
+                                writer.Write(cont);
+                                cont = 0;
+                            }
+                        }
+                        else
+                        {
+                            writer.Write(cont);
+                            cachedTileActive = Main.tile[i, j].active();
+                            cont = 0;
+                            if (cachedTileActive)
+                            {
+                                cont++;
+                            }
+                            else
+                            {
+                                cont--;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Main.NewText("Save Complete!");
+            isSaving = false;
+        }
+
+        public override void Initialize()
+        {
+            fileName = "TBuild";
+            markerPos1 = Point.Zero;
+            markerPos2 = Point.Zero;
+            //TBuildGlobalTile.activeHitmaps.Clear();
+        }
+        //Load it yourself tard
+        /*public override TagCompound Save()
+        {
+            TagCompound result = new TagCompound();
+
+            if (TBuildGlobalTile.activeProtectedTiles.Count > 0)
+            {
+                string[] namesOfTilemaps = new string[TBuildGlobalTile.activeProtectedTiles.Keys.Count];
+
+                TBuildGlobalTile.activeProtectedTiles.Keys.CopyTo(namesOfTilemaps, 0);
+
+                result.Add("activeProtectedTiles", new List<string>(namesOfTilemaps));
+            }
+            return result;
+        }
+        public override void Load(TagCompound tag)
+        {
+            if (tag.ContainsKey("activeProtectedTiles"))
+            {
+                IList<string> namesOfTilemaps = tag.GetList<string>("activeProtectedTiles");
+                for (int i = 0; i < namesOfTilemaps.Count; i++)
+                {
+                    TBuildGlobalTile.activeProtectedTiles.Add(namesOfTilemaps[i], loadhi);
+                }
+            }
+        }*/
+        public override void NetSend(BinaryWriter writer)
+        {
+            writer.Write(markerPos1.X);
+            writer.Write(markerPos1.Y);
+            writer.Write(markerPos2.X);
+            writer.Write(markerPos2.Y);
+            writer.Write(saveProjectiles);
+            writer.Write(saveNPCs);
+        }
+        public override void NetReceive(BinaryReader reader)
+        {
+            markerPos1.X = reader.ReadInt32();
+            markerPos1.Y = reader.ReadInt32();
+            markerPos2.X = reader.ReadInt32();
+            markerPos2.Y = reader.ReadInt32();
+            saveProjectiles = reader.ReadBoolean();
+            saveNPCs = reader.ReadBoolean();
+        }
+        public override void PostUpdate()
+        {
+            if (markerPos1 != markerPos2 && markerPos1 != Point.Zero && markerPos2 != Point.Zero)
+            {
+                if (TBuildWorld.markerPos2.X < TBuildWorld.markerPos1.X)// || TBuildWorld.markerPos2.Y < TBuildWorld.markerPos1.Y)
+                {
+                    int stored = TBuildWorld.markerPos2.X;
+                    TBuildWorld.markerPos2.X = TBuildWorld.markerPos1.X;
+                    TBuildWorld.markerPos1.X = stored;
+                }
+                if (TBuildWorld.markerPos2.Y < TBuildWorld.markerPos1.Y)// || TBuildWorld.markerPos2.Y < TBuildWorld.markerPos1.Y)
+                {
+                    int stored = TBuildWorld.markerPos2.Y;
+                    TBuildWorld.markerPos2.Y = TBuildWorld.markerPos1.Y;
+                    TBuildWorld.markerPos1.Y = stored;
+                }
+            }
+            base.PostUpdate();
+        }
+        public override void PostDrawTiles()
+        {
+            Main.spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, Main.DefaultSamplerState, DepthStencilState.None, Main.instance.Rasterizer, null, Main.GameViewMatrix.TransformationMatrix);
+
+            if (markerPos1 != markerPos2)
+            {
+                if (markerPos1 != Point.Zero)
+                {
+                    Vector2 drawPos1 = new Vector2(markerPos1.X * 16, markerPos1.Y * 16) - Main.screenPosition;
+                    Main.spriteBatch.Draw(mod.GetTexture("Markers"), drawPos1, new Rectangle(0, 0, 16, 16), Color.White, 0f, Vector2.Zero, 1f, SpriteEffects.None, 0f);
+                }
+
+                if (markerPos2 != Point.Zero)
+                {
+                    Vector2 drawPos2 = new Vector2(markerPos2.X * 16, markerPos2.Y * 16) - Main.screenPosition;
+                    Main.spriteBatch.Draw(mod.GetTexture("Markers"), drawPos2, new Rectangle(16, 0, 16, 16), Color.White, 0f, Vector2.Zero, 1f, SpriteEffects.None, 0f);
+                }
+            }
+
+            /*for (int c = 0; c < TBuildGlobalTile.activeHitmaps.Count; c++)
+            {
+                Main.spriteBatch.Draw(Main.magicPixel, new Rectangle(TBuildGlobalTile.activeHitmaps[c].area.X - (int)Main.screenPosition.X, TBuildGlobalTile.activeHitmaps[c].area.Y - (int)Main.screenPosition.Y, TBuildGlobalTile.activeHitmaps[c].area.Width, TBuildGlobalTile.activeHitmaps[c].area.Height), Color.Red * 0.25f);
+            }*/
+
+            Main.spriteBatch.End();
+        }
+    }
+}
